@@ -48,6 +48,10 @@ This project implements a secure, production-style **Hub-and-Spoke network topol
 
 ### Phase 3: Network Traffic Filtering with NSGs
 
+
+### Phase 4: Secret Management with Azure Key Vault & RBAC
+* Deployed `nimbus-keyvault-03` utilizing the Azure RBAC permission model, assigned the `Key Vault Secrets Officer` role, and securely stored `db-password`.
+
 #### Step 5: Configure & Associate Subnet Network Security Groups (`nsg-hub-snet` & `nsg-spoke-snet`)
 * **Objective:** Remove default NIC-level NSGs, provision dedicated Subnet-level NSGs (`nsg-hub-snet` and `nsg-spoke-snet`), configure least-privilege inbound rules for Bastion SSH and internal ICMP diagnostics, and verify connectivity across the VNet peering link.
 * **Why This Matters:** Associating NSGs at the subnet boundary enforces uniform Layer-4 stateful packet filtering across all VMs in the subnet. Scoping port 22 strictly to `10.0.2.0/26` (`AzureBastionSubnet`) ensures SSH connections are only accepted from the Bastion host, while the `VirtualNetwork` Service Tag permits ICMP echo requests across both `10.0.0.0/16` and the peered `10.1.0.0/16` network.
