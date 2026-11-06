@@ -57,3 +57,11 @@ This project implements a secure, production-style **Hub-and-Spoke network topol
 ![NSG Inbound Rules](05-nsg-rules.png)
 * **Connectivity Verification (Intra-VNet & Cross-VNet Peering Ping Test):**
 ![VM Ping Connectivity Test](05-1-ping-test.png)
+
+### Phase 5: Secure Blob Storage with Private Endpoint & Private DNS
+
+#### Step 6: Provision Storage Account, Private Endpoint, and Private DNS Zones
+* **Objective:** Deploy `nimbusstorage03` with public network access disabled entirely, exposing data access exclusively via a **Private Endpoint** (`10.0.1.6`) inside `nimbus-hub-subnet`. Integrated with a **Private DNS Zone** (`privatelink.blob.core.windows.net`) linked to both Hub and Spoke VNets for private name resolution.
+* **Why This Matters:** Disabling public network access ensures the storage account is immune to internet-based data exfiltration. The Private Endpoint routes storage traffic entirely across Microsoft’s private backbone, while Private DNS zones ensure internal workloads resolve storage FQDNs to private IPs automatically.
+* **Verification Screenshot (Secure Blob Container & Uploaded File):**
+![Blob Storage Container](07-blob-storage.png)
