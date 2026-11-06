@@ -32,3 +32,28 @@ This project implements a secure, production-style **Hub-and-Spoke network topol
 * **Troubleshooting & Hardening Note:** During initial provisioning, Azure attached default Public IP resources to the VM Network Interface Cards (NICs). To enforce strict private-only access, the Public IPs were disassociated directly at the NIC `ipconfig1` level and removed from the resource group.
 * **Verification Screenshot:**
 ![Three Linux VMs Deployed Privately](03-vms-deployed.png)
+
+### Phase 2: Secure VM Access via Azure Bastion
+
+#### Step 4: Deploy Azure Bastion & Establish Private SSH Sessions
+* **Objective:** Provision `nimbus-bastion` inside `AzureBastionSubnet` (`10.0.2.0/26`) in `hub-vnet` to enable browser-based SSH access to internal VMs without exposing Public IP addresses or port 22 to the internet.
+* **Why This Matters:** Azure Bastion acts as a fully managed PaaS jump-host. Administrators authenticate to the Azure Portal over TLS (port 443), and Bastion proxies the SSH connection (port 22) over the private VNet backbone directly to `vm-hub-1` (`10.0.1.4`).
+* **Quota Troubleshooting Note:** Encountered a regional Public IP quota limit (`3 of 3` used on the Azure for Students subscription) caused by orphaned Public IP resources left behind after NIC disassociation. Resolved by purging the unattached Public IP objects from the `nimbus-labs` resource group before provisioning the dedicated Standard SKU Public IP required by the Bastion gateway.
+* **Dedicated Bastion Subnet (`AzureBastionSubnet` - `10.0.2.0/26`):**
+![Azure Bastion Subnet](04-Bastion-subnet.png)
+* **Verification (Browser-Based SSH Session into `vm-hub-1` at `10.0.1.4`):**
+![Bastion SSH Session into vm-hub-1](04-secured-bastion-access-on-vm-hub-1.png)
+
+---
+
+### Phase 3: Network Traffic Filtering with NSGs
+
+#### Step 5: Configure & Associate Subnet Network Security Groups (`nsg-hub-snet` & `nsg-spoke-snet`)
+* **Objective:** Remove default NIC-level NSGs, provision dedicated Subnet-level NSGs (`nsg-hub-snet` and `nsg-spoke-snet`), configure least-privilege inbound rules for Bastion SSH and internal ICMP diagnostics, and verify connectivity across the VNet peering link.
+* **Why This Matters:** Associating NSGs at the subnet boundary enforces uniform Layer-4 stateful packet filtering across all VMs in the subnet. Scoping port 22 strictly to `10.0.2.0/26` (`AzureBastionSubnet`) ensures SSH connections are only accepted from the Bastion host, while the `VirtualNetwork` Service Tag permits ICMP echo requests across both `10.0.0.0/16` and the peered `10.1.0.0/16` network.
+* **Provisioned Subnet NSGs:**
+![Deployed Subnet NSGs](04-deployed-nsgs.png)
+* **Inbound Security Rules (`Allow-Bastion-SSH` & `Allow-vnet-ICMP`):**
+![NSG Inbound Rules](05-nsg-rules.png)
+* **Connectivity Verification (Intra-VNet & Cross-VNet Peering Ping Test):**
+![VM Ping Connectivity Test](05-1-ping-test.png)
