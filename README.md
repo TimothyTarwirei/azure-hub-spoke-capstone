@@ -25,3 +25,10 @@ This project implements a secure, production-style **Hub-and-Spoke network topol
 ![Spoke VNet Peering Setup](02-1-spoke-vnet-peering-setup.png)
 * **Verification (Peering Connected & Fully Synchronized):**
 ![Spoke VNet Peering Connected](02-spoke-vnet-peering.png)
+
+#### Step 3: Deploy Three Linux Virtual Machines (`vm-hub-1`, `vm-hub-2`, `vm-spoke-1`)
+* **Objective:** Provision three Ubuntu Server Linux VMs across the Hub and Spoke subnets (`vm-hub-1` and `vm-hub-2` in `nimbus-hub-subnet`; `vm-spoke-1` in `nimbus-spoke-subnet`) with all Public IP addresses disassociated.
+* **Why This Matters:** Deploying compute instances without Public IP addresses eliminates direct internet exposure, preventing automated port-scanning and brute-force SSH attacks on port 22. All three VMs rely strictly on RFC 1918 private IP allocation (`10.0.1.x` in the Hub and `10.1.1.x` in the Spoke) and will be accessed exclusively through Azure Bastion.
+* **Troubleshooting & Hardening Note:** During initial provisioning, Azure attached default Public IP resources to the VM Network Interface Cards (NICs). To enforce strict private-only access, the Public IPs were disassociated directly at the NIC `ipconfig1` level and removed from the resource group.
+* **Verification Screenshot:**
+![Three Linux VMs Deployed Privately](03-vms-deployed.png)
