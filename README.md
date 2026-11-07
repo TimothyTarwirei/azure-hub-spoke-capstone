@@ -1,118 +1,117 @@
-# Azure Hub-and-Spoke Secure Network Architecture (Capstone Project)
+# Azure Hub-and-Spoke Network Lab (Capstone Project)
 
 ## 1. Project Overview
-This project implements a production-style, secure **Hub-and-Spoke network topology** in Microsoft Azure. Built through the Azure Portal, this infrastructure isolates backend Linux compute workloads from the public internet while enabling secure administrative access via **Azure Bastion**, strict Layer-4 traffic filtering via **Network Security Groups (NSGs)**, passwordless secret retrieval using **System-Assigned Managed Identities** and **Azure Key Vault RBAC**, and private PaaS storage connectivity using **Azure Private Endpoints** and **Private DNS Zones**.
+For my Azure Fundamentals capstone project, I built a secure **Hub-and-Spoke network** from scratch using the Azure Portal. 
+
+The main goal of this lab was to learn how to deploy Linux virtual machines and cloud storage without exposing them to the public internet. Instead of giving my VMs public IP addresses, I used **Azure Bastion** to SSH into them safely from my browser, **Network Security Groups (NSGs)** to control what traffic is allowed in, **Managed Identities** so the VMs can grab secrets from **Azure Key Vault** without needing hardcoded passwords, and a **Private Endpoint** to keep storage traffic inside my private network.
 
 ### Architecture Diagram
 ![Architecture Diagram](architecture.png)
 
 ---
 
-## 2. Cloud Service Models & Components Used
+## 2. Resources Used (IaaS vs. PaaS)
 
-| Resource | Service Model | Role in Architecture |
+| Resource | Type | What It Does in My Lab |
 | :--- | :--- | :--- |
-| **Virtual Networks (`nimbus-hub-vnet`, `nimbus-spoke-vnet`)** | IaaS (Networking) | Isolated Layer-3 IP address spaces (`10.0.0.0/16` & `10.1.0.0/16`) connected via bidirectional VNet Peering. |
-| **Linux Virtual Machines (`vm-hub-1`, `vm-hub-2`, `vm-spoke-1`)** | IaaS (Compute) | Ubuntu Server workloads deployed strictly with private RFC 1918 IP addresses (no Public IPs) and System-Assigned Managed Identities. |
-| **Network Security Groups (`nsg-hub`, `nsg-spoke`)** | IaaS (Security) | Stateful Layer-4 packet filters associated at the subnet boundary to enforce least-privilege traffic rules. |
-| **Azure Bastion (`nimbus-bastion`)** | PaaS (Security) | Managed jump-host inside `AzureBastionSubnet` providing browser-based SSH over TLS (port 443). |
-| **Managed Identities & RBAC** | PaaS / Identity | Passwordless Microsoft Entra ID identities attached to each VM, granted the `Key Vault Secrets User` role. |
-| **Azure Key Vault (`nimbus-kv`)** | PaaS (Security) | Centralized hardware-backed vault storing sensitive secrets (`app-secret` / `db-password`) governed by RBAC. |
-| **Azure Storage Account (`nimbustorage03`)** | PaaS (Storage) | Blob storage (`nimbus-blob`) locked down to private network access via a Private Endpoint and Private DNS Zone. |
+| **Virtual Networks (`nimbus-hub-vnet`, `nimbus-spoke-vnet`)** | IaaS | Two separate private networks (`10.0.0.0/16` and `10.1.0.0/16`) connected together using VNet Peering. |
+| **Linux VMs (`vm-hub-1`, `vm-hub-2`, `vm-spoke-1`)** | IaaS | Three Ubuntu servers with private IPs only (no public IPs attached). |
+| **Network Security Groups (`nsg-hub`, `nsg-spoke`)** | IaaS | Virtual firewalls attached to the subnets to only allow SSH from Bastion and ping tests between VMs. |
+| **Azure Bastion (`nimbus-bastion`)** | PaaS | Let me SSH into my private VMs directly through the Azure Portal without opening port 22 to the internet. |
+| **Managed Identities & RBAC** | PaaS | Gives each VM its own built-in Azure identity so it has permission to read secrets from the Key Vault. |
+| **Azure Key Vault (`nimbus-kv`)** | PaaS | A secure digital safe used to store my database password (`db-password` / `app-secret`). |
+| **Storage Account (`nimbustorage`)** | PaaS | Holds my blob container (`nimbus-blob`) and connects privately to the VNet using a Private Endpoint. |
 
 ---
 
-## 3. Step-by-Step Implementation
+## 3. Step-by-Step Build
 
-### Phase 1: Networking & VM Deployment
+### Phase 1: Networking & Virtual Machines
 
 #### Step 1: Create the Hub Virtual Network (`nimbus-hub-vnet`)
-* **Objective:** Provision the central Hub VNet (`10.0.0.0/16`) and carve out the primary workload subnet (`nimbus-hub-subnet` - `10.0.1.0/24`) inside the `nimbus-labs` resource group.
-* **Why This Matters:** The Hub VNet acts as the central point of connectivity and security inspection. Using a `/16` CIDR block provides 65,536 IP addresses, leaving dedicated address space outside the `/24` workload subnet for shared platform services like `AzureBastionSubnet`.
-* **Verification Screenshot:**
+* **What I Did:** Created my main "Hub" network with the address space `10.0.0.0/16` and added a subnet called `nimbus-hub-subnet` (`10.0.1.0/24`) inside the `nimbus-labs` resource group.
+* **Why:** VMs need a private network to live in. Making the main VNet `/16` and the VM subnet `/24` leaves plenty of free IP addresses for extra subnets later (like the one Azure Bastion needs).
+* **Screenshot:**
 ![Hub VNet Deployment](01-hub-vnet.png)
 
-#### Step 2: Create the Spoke Virtual Network (`nimbus-spoke-vnet`) & Configure VNet Peering
-* **Objective:** Provision the isolated Spoke VNet (`10.1.0.0/16`) with its workload subnet (`nimbus-spoke-subnet` - `10.1.1.0/24`), and establish bidirectional VNet Peering (`hub-spoke`) between the Hub and Spoke networks.
-* **Why This Matters:** Separating workloads into a Spoke VNet enforces network segmentation. Using a non-overlapping `/16` CIDR block (`10.1.0.0/16` vs. `10.0.0.0/16`) prevents routing conflicts and allows seamless Layer-3 private connectivity across Microsoft's backbone via VNet Peering without traversing the public internet.
-* **Peering Configuration:**
+#### Step 2: Create the Spoke Virtual Network (`nimbus-spoke-vnet`) & VNet Peering
+* **What I Did:** Created a second network (`10.1.0.0/16`) with its own subnet (`nimbus-spoke-subnet` - `10.1.1.0/24`), then linked it to the Hub VNet using **VNet Peering**.
+* **Why:** In real environments, workloads are split into separate networks for better security and organization. Giving the Spoke network a different IP range (`10.1.x.x` vs `10.0.x.x`) ensures the two networks don't clash when peered together.
+* **Peering Setup:**
 ![Spoke VNet Peering Setup](02-1-spoke-vnet-peering-setup.png)
-* **Verification (Peering Connected & Fully Synchronized):**
+* **Peering Connected:**
 ![Spoke VNet Peering Connected](02-spoke-vnet-peering.png)
 
-#### Step 3: Deploy Three Linux Virtual Machines (`vm-hub-1`, `vm-hub-2`, `vm-spoke-1`)
-* **Objective:** Provision three Ubuntu Server Linux VMs across the Hub and Spoke subnets (`vm-hub-1` and `vm-hub-2` in `nimbus-hub-subnet`; `vm-spoke-1` in `nimbus-spoke-subnet`) with all Public IP addresses disassociated.
-* **Why This Matters:** Deploying compute instances without Public IP addresses eliminates direct internet exposure, preventing automated port-scanning and brute-force SSH attacks on port 22. All three VMs rely strictly on private IP allocation and are accessed exclusively through Azure Bastion.
-* **Verification Screenshot:**
+#### Step 3: Deploy Three Linux VMs (`vm-hub-1`, `vm-hub-2`, `vm-spoke-1`)
+* **What I Did:** Deployed two Ubuntu VMs in the Hub subnet and one Ubuntu VM in the Spoke subnet, and made sure none of them had a Public IP address.
+* **Why:** Leaving Public IPs off the VMs means strangers on the internet can't scan them or try to brute-force the SSH login. They can only be reached from inside the private network.
+* **Screenshot:**
 ![Three Linux VMs Deployed Privately](03-vms-deployed.png)
 
 ---
 
-### Phase 2: Secure VM Access via Azure Bastion
+### Phase 2: Connecting to the VMs with Azure Bastion
 
-#### Step 4: Deploy Azure Bastion & Establish Private SSH Sessions
-* **Objective:** Provision `nimbus-bastion` inside `AzureBastionSubnet` in `nimbus-hub-vnet` to enable browser-based SSH access to internal VMs without exposing Public IP addresses or port 22 to the internet.
-* **Why This Matters:** Azure Bastion acts as a fully managed PaaS jump-host. Administrators authenticate to the Azure Portal over TLS (port 443), and Bastion proxies the SSH connection (port 22) over the private VNet backbone directly to `vm-hub-1` (`10.0.1.4`).
-* **Dedicated Bastion Subnet (`AzureBastionSubnet`):**
+#### Step 4: Deploy Azure Bastion & SSH into `vm-hub-1`
+* **What I Did:** Created an `AzureBastionSubnet` (`10.0.2.0/26`) inside the Hub VNet, deployed `nimbus-bastion`, and used it to open an SSH terminal to `vm-hub-1` (`10.0.1.4`).
+* **Why:** Since my VMs don't have public IPs, I needed a safe way to log into them. Azure Bastion acts as a secure jump-box that lets me log into the VMs right inside my browser over HTTPS.
+* **Bastion Subnet:**
 ![Azure Bastion Subnet](04-Bastion-subnet.png)
-* **Verification (Browser-Based SSH Session into `vm-hub-1` at `10.0.1.4`):**
+* **Logged into `vm-hub-1` via Bastion:**
 ![Bastion SSH Session into vm-hub-1](04-secured-bastion-access-on-vm-hub-1.png)
 
 ---
 
-### Phase 3: Network Traffic Filtering with NSGs
+### Phase 3: Locking Down Traffic with NSGs
 
-#### Step 5: Configure & Associate Subnet Network Security Groups (`nsg-hub` & `nsg-spoke`)
-* **Objective:** Remove default NIC-level NSGs, provision dedicated Subnet-level NSGs (`nsg-hub-snet` and `nsg-spoke-snet`), configure least-privilege inbound rules for Bastion SSH and internal ICMP diagnostics, and verify connectivity across the VNet peering link.
-* **Why This Matters:** Associating NSGs at the subnet boundary enforces uniform Layer-4 stateful packet filtering across all VMs in the subnet. Scoping port 22 strictly to `AzureBastionSubnet` ensures SSH connections are only accepted from the Bastion host, while the `VirtualNetwork` Service Tag permits ICMP echo requests across both `10.0.0.0/16` and the peered `10.1.0.0/16` network.
-* **Provisioned Subnet NSGs:**
+#### Step 5: Set Up Network Security Groups (`nsg-hub-snet` & `nsg-spoke-snet`)
+* **What I Did:** Created two NSGs, attached them to my Hub and Spoke subnets, and added two inbound rules:
+  1. `Allow-Bastion-SSH`: Only allows SSH (port 22) coming from the Bastion subnet (`10.0.2.0/26`).
+  2. `Allow-vnet-ICMP`: Allows VMs inside the virtual networks to ping each other.
+* **Why:** NSGs act like a firewall rule list for the subnet. Even inside a private network, it's good practice to restrict traffic so SSH only works when coming through Bastion. Afterward, I ran `ping` from `vm-hub-1` to test that both internal and peered VMs could talk to each other.
+* **Deployed NSGs:**
 ![Deployed Subnet NSGs](04-deployed-nsgs.png)
-* **Inbound Security Rules (`Allow-Bastion-SSH` & `Allow-vnet-ICMP`):**
+* **Inbound Rules:**
 ![NSG Inbound Rules](05-nsg-rules.png)
-* **Connectivity Verification (Intra-VNet & Cross-VNet Peering Ping Test):**
+* **Ping Test Results:**
 ![VM Ping Connectivity Test](05-1-ping-test.png)
 
 ---
 
-### Phase 4: Passwordless Secret Management with Key Vault, Managed Identities & RBAC
+### Phase 4: Storing Secrets in Azure Key Vault
 
-#### Step 6: Provision Azure Key Vault, Enable VM Managed Identities, and Configure RBAC
-* **Objective:** Deploy Azure Key Vault (`nimbus-kv`) using the Azure Role-Based Access Control (RBAC) permission model, store sensitive application secrets (`db-password` / `app-secret`), and configure **System-Assigned Managed Identities** on all three VMs (`vm-hub-1`, `vm-hub-2`, and `vm-spoke-1`) with the `Key Vault Secrets User` RBAC role.
-* **Why This Matters:** Hardcoding database credentials or API keys inside application code or configuration files creates severe security risks. By enabling a **System-Assigned Managed Identity** on each VM and scoping permissions via **Azure RBAC**, VMs can authenticate to Key Vault without ever storing passwords on disk.
-* **End-to-End Authentication Flow:**
-  1. **Token Request:** The VM uses its System-Assigned Managed Identity to request an OAuth 2.0 access token from the local Azure Instance Metadata Service (IMDS) endpoint (`169.254.169.254`).
-  2. **Secret Request:** The VM presents the Bearer token to `nimbus-kv` to request the secret (authorized by the `Key Vault Secrets User` RBAC role).
-  3. **Secure Delivery:** Key Vault validates the token against Microsoft Entra ID and returns the secret securely over HTTPS.
-* **Verification Screenshot (Secret Stored & Managed in Key Vault):**
+#### Step 6: Set Up Key Vault, RBAC Permissions, and VM Managed Identities
+* **What I Did:** Created an Azure Key Vault (`nimbus-kv`), gave my account the `Key Vault Secrets Officer` role to add a test secret (`db-password`), and turned on **System-Assigned Managed Identities** for all three VMs with the `Key Vault Secrets User` role.
+* **Why:** Storing passwords in plain text or inside code is risky. Putting them in Key Vault keeps them safe, and turning on Managed Identities gives each VM an automatic "ID badge" in Azure so it can request secrets without needing a password of its own.
+* **How the VMs Get the Secret:**
+  1. The VM uses its Managed Identity to ask Azure for a temporary access token.
+  2. The VM sends that token to the Key Vault to ask for the secret.
+  3. Key Vault checks that the VM has the `Key Vault Secrets User` role and sends the secret back over HTTPS.
+* **Screenshot:**
 ![Azure Key Vault Secret](06-keyvault-secret.png)
 
 ---
 
-### Phase 5: Secure Blob Storage with Private Endpoint & Private DNS
+### Phase 5: Securing Blob Storage with a Private Endpoint
 
-#### Step 7: Provision Storage Account, Private Endpoint, and Private DNS Zones
-* **Objective:** Deploy the Storage Account (`nimbustorage`) with public network access restricted, exposing data access internally via a **Private Endpoint** inside `nimbus-hub-subnet` integrated with a **Private DNS Zone** (`privatelink.blob.core.windows.net`) linked to both Hub and Spoke VNets. Create the `nimbus-blob` container and verify file upload (`test.txt`).
-* **Why This Matters:** Disabling unrestricted public network access ensures the storage account is protected against internet-based data exfiltration. The Private Endpoint assigns a private IP from `nimbus-hub-subnet` to the storage account, routing storage traffic entirely across Microsoft's private backbone, while the Private DNS Zone links (`VNet Link`) ensure internal workloads in both Hub and Spoke VNets automatically resolve `nimbustorage.blob.core.windows.net` to its private IP.
-* **Verification Screenshot (Secure Blob Container & Uploaded File):**
+#### Step 7: Create Storage Account, Private Endpoint, and Private DNS Zone
+* **What I Did:** Created a storage account (`nimbustorage`), turned off public access, and connected it to `nimbus-hub-subnet` using a **Private Endpoint** and a **Private DNS Zone** (`privatelink.blob.core.windows.net`). Then I created a blob container (`nimbus-blob`) and uploaded a test file (`test.txt`).
+* **Why:** Normally, Azure Storage has a public web link. Adding a Private Endpoint gives the storage account a private IP inside my Hub VNet (`10.0.1.6`), and the Private DNS Zone makes sure my VMs use that private IP whenever they connect to the storage account.
+* **Screenshot:**
 ![Blob Storage Container](07-blob-storage.png)
 
 ---
 
-## 4. Real-World Troubleshooting & Engineering Lessons Learned
+## 4. Issues I Ran Into & How I Fixed Them
 
-During the deployment of this infrastructure, several real-world cloud engineering challenges were encountered and resolved:
+While building this lab, I ran into a few errors that taught me a lot about how Azure works behind the scenes:
 
-1. **Default Public IP Attachment & Regional Quota Exhaustion (`3 of 3` Limit):**
-   * **Issue:** During initial VM provisioning, Azure attached default Public IP resources to the VM NICs. When attempting to provision Azure Bastion, deployment failed due to hitting the regional Public IP quota limit (`3 of 3` on the Azure for Students subscription).
-   * **Resolution:** Disassociated the Public IPs directly from each VM's NIC (`ipconfig1`) and deleted the orphaned Public IP objects from the `nimbus-labs` resource group, freeing up regional quota for the Bastion gateway and enforcing strict private-only VM access.
-2. **Consolidating NIC-Level vs. Subnet-Level NSGs:**
-   * **Issue:** Default VM creation generated individual NIC-level NSGs (`vm-hub-1-nsg`, etc.), creating redundant management overhead alongside our planned subnet-level NSGs.
-   * **Resolution:** Disassociated and removed the default NIC-level NSGs, standardizing traffic filtering at the subnet boundary (`nsg-hub-snet` and `nsg-spoke-snet`) using the `VirtualNetwork` Service Tag for cross-peering ICMP diagnostics.
-3. **Storage Account Data-Plane RBAC & Private Network Enforcement (`HTTP 403 Forbidden`):**
-   * **Issue:** Attempting to view and upload blobs into the `nimbus-blob` container via the Azure Portal initially returned a `403 This request is not authorized to perform this operation` error, even as the Subscription Owner.
-   * **Resolution:** Identified two distinct security boundaries at play: (1) Control Plane ownership does not automatically grant Data Plane blob access, requiring explicit assignment of the **Storage Blob Data Contributor** RBAC role, and (2) setting the Storage Account to *Private endpoint only* blocks the Azure Portal browser client over the public internet, requiring either internal VNet access or temporary client IP whitelisting under the Storage Account firewall for administrative portal uploads.
-
----
-
-## 5. Security Architecture Summary
-By combining **network segmentation (Hub-and-Spoke VNets)**, **perimeter hardening (zero VM Public IPs + Azure Bastion)**, **micro-segmentation (Subnet NSGs)**, **passwordless identity governance (System-Assigned Managed Identities + Entra ID RBAC for Key Vault and Blob Storage)**, and **private PaaS injection (Private Endpoints + Private DNS)**, this architecture implements a defense-in-depth cloud posture ready for enterprise workloads.
+1. **Hitting the Student Subscription Public IP Limit (`3 of 3`):**
+   * **What happened:** When I first created the three VMs, Azure automatically created and attached 3 Public IPs to them. Later, when I tried to deploy Azure Bastion, it failed because my *Azure for Students* subscription only allows 3 Public IPs per region.
+   * **How I fixed it:** I went into each VM's network interface (`ipconfig1`), unchecked the Public IP to detach it, and deleted the 3 unused Public IP resources from my resource group. That freed up my quota for Bastion and kept my VMs completely private.
+2. **Extra Default NSGs on the VMs:**
+   * **What happened:** Azure also auto-created separate NSGs for each VM's network card (`vm-hub-1-nsg`, etc.), which got messy when I wanted to manage rules at the subnet level.
+   * **How I fixed it:** I detached and deleted the default NIC NSGs so I only had to manage two clean subnet-level NSGs (`nsg-hub-snet` and `nsg-spoke-snet`).
+3. **`403 Not Authorized` Error When Opening the Blob Container:**
+   * **What happened:** After creating my storage account with public access turned off, Azure blocked me from opening the container in my browser with a `403` error—even though I own the subscription.
+   * **How I fixed it:** I learned two things here: first, being Subscription Owner doesn't automatically let you view files inside storage, so I had to assign myself the **Storage Blob Data Contributor** role in IAM. Second, because public network access was disabled, the Azure Portal in my browser was being blocked by the storage firewall, so I had to whitelist my home IP under the Networking tab to upload `test.txt`.
